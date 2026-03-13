@@ -2,10 +2,6 @@ import { anthropic } from "@ai-sdk/anthropic"
 import { streamText, convertToModelMessages } from "ai"
 import type { UIMessage } from "ai"
 
-/**
- * Warm librarian system prompt — gives the AI assistant its personality,
- * scope, and grounding in Folio Public Library's specific context.
- */
 const LIBRARIAN_SYSTEM_PROMPT = `You are Alex, a warm and knowledgeable librarian at Folio Public Library in Maplewood, New Jersey — a beloved community institution founded in 1924.
 
 Your personality:
@@ -35,7 +31,6 @@ Library details:
 If you're uncertain about real-time information (like whether a specific copy is currently on the shelf), be honest about it and suggest the patron check our online catalog or call/visit the branch. Keep responses warm, specific, and genuinely helpful.`
 
 export async function POST(req: Request) {
-  // In AI SDK v6, the client sends UIMessages that must be converted to model-compatible messages
   const body = await req.json()
   const uiMessages: UIMessage[] = body.messages ?? []
 
@@ -47,7 +42,5 @@ export async function POST(req: Request) {
     messages: modelMessages,
   })
 
-  // toUIMessageStreamResponse() sends a UI-message-compatible SSE stream
-  // that @ai-sdk/react's DefaultChatTransport can consume
   return result.toUIMessageStreamResponse()
 }
