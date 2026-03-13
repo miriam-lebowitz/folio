@@ -3,16 +3,19 @@ import Link from "next/link"
 import { BookOpen, Star, BookMarked, Share2, Clock, AlertCircle } from "lucide-react"
 import BookCard from "@/components/BookCard"
 import BookDetailTabs from "./BookDetailTabs"
-import { BOOKS, getBook, getRelatedBooks } from "@/lib/data"
+import { getBooks, getBook, getRelatedBooks } from "@/lib/data"
 
-// Pre-generate static pages for every book at build time
-export function generateStaticParams() {
-  return BOOKS.map((book) => ({ id: book.id }))
+// Pre-generate static pages for all known books at build time.
+// getBooks() is cached by Next.js so this doesn't cause an extra API round-trip
+// beyond the one already made during the page renders.
+export async function generateStaticParams() {
+  const books = await getBooks()
+  return books.map((book) => ({ id: book.id }))
 }
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const book = getBook(id)
+  const book = await getBook(id)
   if (!book) return {}
   return {
     title: `${book.title} by ${book.author}`,
@@ -54,11 +57,11 @@ export default async function BookDetailPage({
   params: Promise<{ id: string }>
 }) {
   const { id } = await params
-  const book = getBook(id)
+  const book = await getBook(id)
 
   if (!book) notFound()
 
-  const related = getRelatedBooks(book, 4)
+  const related = await getRelatedBooks(book.genre, book.id, 4)
   const avail = availabilityDisplay[book.availability]
 
   return (

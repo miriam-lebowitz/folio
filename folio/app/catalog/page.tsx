@@ -16,7 +16,7 @@ import {
 } from "lucide-react"
 import SearchBar from "@/components/SearchBar"
 import BookCard from "@/components/BookCard"
-import { BOOKS, GENRES, NEW_ARRIVALS, STAFF_PICKS } from "@/lib/data"
+import { GENRES, getBooks, getStaffPicks, getNewArrivals } from "@/lib/data"
 
 // Genre icon mapping (same as home page — could be extracted to a shared util)
 const genreIcons: Record<string, React.ReactNode> = {
@@ -39,12 +39,16 @@ export const metadata = {
   description: "Explore Folio's collection by genre, subject, and reading level.",
 }
 
-export default function CatalogPage() {
-  const staffPickBooks = STAFF_PICKS.map((id) => BOOKS.find((b) => b.id === id)!).filter(Boolean)
-  const newArrivalBooks = NEW_ARRIVALS.slice(0, 5).map((id) => BOOKS.find((b) => b.id === id)!).filter(Boolean)
+export default async function CatalogPage() {
+  const [allBooks, staffPickBooks, newArrivalsRaw] = await Promise.all([
+    getBooks(),
+    getStaffPicks(),
+    getNewArrivals(),
+  ])
+  const newArrivalBooks = newArrivalsRaw.slice(0, 5)
 
   // Books for the young readers section
-  const youngReaderBooks = BOOKS.filter(
+  const youngReaderBooks = allBooks.filter(
     (b) => b.genre === "Children's" || b.genre === "Young Adult",
   ).slice(0, 4)
 

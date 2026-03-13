@@ -4,9 +4,11 @@ import { useState, useMemo } from "react"
 import { useRouter } from "next/navigation"
 import { LayoutGrid, List, SlidersHorizontal, X, Search } from "lucide-react"
 import BookCard from "@/components/BookCard"
-import { BOOKS, GENRES } from "@/lib/data"
+import { GENRES, type BookDetail } from "@/lib/data"
 
 interface SearchClientProps {
+  /** All books fetched server-side and passed down so the client needs no API calls */
+  initialBooks: BookDetail[]
   initialQuery: string
   initialGenre: string
   initialFormat: string
@@ -62,6 +64,7 @@ function FilterOption({
 }
 
 export default function SearchClient({
+  initialBooks,
   initialQuery,
   initialGenre,
   initialFormat,
@@ -95,7 +98,7 @@ export default function SearchClient({
 
   // ── Filtering ──────────────────────────────────────────────────────────── //
   const results = useMemo(() => {
-    let filtered = BOOKS.filter((book) => {
+    let filtered = initialBooks.filter((book) => {
       // Keyword match against title and author
       if (query) {
         const q = query.toLowerCase()
@@ -142,7 +145,7 @@ export default function SearchClient({
     }
 
     return filtered
-  }, [query, genre, format, availability, sort])
+  }, [initialBooks, query, genre, format, availability, sort])
 
   // Active filter count (for mobile badge)
   const activeFilterCount = [genre, format, availability].filter(Boolean).length
@@ -177,7 +180,7 @@ export default function SearchClient({
           <FilterOption
             key={g.id}
             label={g.name}
-            count={BOOKS.filter((b) => b.genre.toLowerCase().replace(/ & /g, "-").replace(/ /g, "-") === g.id).length}
+            count={initialBooks.filter((b) => b.genre.toLowerCase().replace(/ & /g, "-").replace(/ /g, "-") === g.id).length}
             selected={genre === g.id}
             onClick={() => setGenreAndUpdate(genre === g.id ? "" : g.id)}
           />

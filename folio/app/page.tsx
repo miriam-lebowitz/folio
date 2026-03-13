@@ -24,12 +24,11 @@ import {
 import SearchBar from "@/components/SearchBar"
 import BookCard from "@/components/BookCard"
 import {
-  BOOKS,
   EVENTS,
   ANNOUNCEMENTS,
   GENRES,
-  STAFF_PICKS,
-  NEW_ARRIVALS,
+  getStaffPicks,
+  getNewArrivals,
 } from "@/lib/data"
 
 // ── Genre icon mapping ──────────────────────────────────────────────────────── //
@@ -63,9 +62,11 @@ const announcementStyles: Record<string, { icon: React.ReactNode; border: string
   warning: { icon: <Megaphone className="w-5 h-5 text-amber-dark" />, border: "border-amber-dark/40", bg: "bg-amber-light/10" },
 }
 
-export default function HomePage() {
-  const staffPickBooks = STAFF_PICKS.map((id) => BOOKS.find((b) => b.id === id)!).filter(Boolean)
-  const newArrivalBooks = NEW_ARRIVALS.map((id) => BOOKS.find((b) => b.id === id)!).filter(Boolean)
+export default async function HomePage() {
+  const [staffPickBooks, newArrivalBooks] = await Promise.all([
+    getStaffPicks(),
+    getNewArrivals(),
+  ])
   const featuredEvents = [...EVENTS].sort((a, b) => (b.featured ? 1 : 0) - (a.featured ? 1 : 0)).slice(0, 3)
 
   return (

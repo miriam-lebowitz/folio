@@ -1,4 +1,11 @@
 import type { Book } from "@/components/BookCard"
+import {
+  fetchBooksByISBNs,
+  olCoverUrl,
+  olDataForISBN,
+  extractPublisher,
+  extractSubjects,
+} from "./openlibrary"
 
 // ── Extended Types ─────────────────────────────────────────────────────────── //
 
@@ -53,30 +60,599 @@ export interface LibraryGenre {
   description: string
 }
 
-// ── Helper Functions ───────────────────────────────────────────────────────── //
+// ── Book Seed Data ─────────────────────────────────────────────────────────── //
+//
+// Each seed entry contains every field required to render a BookDetail, so the
+// app works fully even if the Open Library API is unavailable. When the API IS
+// reachable, selected fields (publisher, pages, subjects, cover) are overridden
+// with live data to ensure accuracy and real cover images.
+//
+// Fields that are ALWAYS kept from seeds (Open Library cannot supply them):
+//   availability, format, rating, dewey, totalCopies, availableCopies,
+//   waitlistCount, reviews
+//
+// Fields that come from Open Library when available (seed values are fallbacks):
+//   publisher, pages, subjects, cover
 
-export function getBook(id: string): BookDetail | undefined {
-  return BOOKS.find((b) => b.id === id)
+interface BookSeed extends BookDetail {
+  /** 13-digit ISBN (hyphens OK) — used as the key for Open Library lookups */
+  isbn: string
 }
 
-export function getBooksByGenre(genre: string, limit?: number): BookDetail[] {
-  const filtered = BOOKS.filter(
-    (b) => b.genre.toLowerCase() === genre.toLowerCase(),
-  )
+const BOOK_SEEDS: BookSeed[] = [
+  {
+    id: "1",
+    title: "The Midnight Library",
+    author: "Matt Haig",
+    genre: "Fiction",
+    availability: "available",
+    year: 2020,
+    rating: 4.2,
+    format: "print",
+    isbn: "978-0-525-55947-4",
+    description:
+      "Between life and death there is a library, and within that library, the shelves go on forever. Every book provides a chance to try another life you could have lived. When Nora Seed finds herself in the Midnight Library, she must decide once and for all what makes a life truly worth living.",
+    publisher: "Viking",
+    pages: 288,
+    dewey: "823.92",
+    subjects: ["Fiction", "Fantasy", "Mental Health", "Parallel Lives", "Second Chances"],
+    totalCopies: 4,
+    availableCopies: 2,
+    waitlistCount: 0,
+    reviews: [
+      { id: "r1-1", patron: "Sarah M.", rating: 5, date: "March 15, 2024", text: "A beautiful, life-affirming book that made me reconsider all the roads not taken. I was in tears by the end — in the very best way." },
+      { id: "r1-2", patron: "James K.", rating: 4, date: "February 8, 2024", text: "Haig has a gift for making complex philosophical ideas feel deeply human. Warm and thoroughly thought-provoking." },
+      { id: "r1-3", patron: "Pat L.", rating: 3, date: "November 20, 2023", text: "Charming and well-written, though somewhat predictable. A gentle, reassuring read I'd recommend to anyone going through a difficult stretch." },
+    ],
+  },
+  {
+    id: "2",
+    title: "Tomorrow, and Tomorrow, and Tomorrow",
+    author: "Gabrielle Zevin",
+    genre: "Fiction",
+    availability: "checked-out",
+    year: 2022,
+    rating: 4.5,
+    format: "print",
+    isbn: "978-0-593-32137-8",
+    description:
+      "Two old friends reunite to create a video game that becomes a phenomenon, and their creative partnership spans decades filled with joy, tragedy, envy, and love. A dazzling novel about collaboration, ambition, and what it means to devote your life to making something.",
+    publisher: "Knopf",
+    pages: 402,
+    dewey: "813.6",
+    subjects: ["Fiction", "Friendship", "Video Games", "Creativity", "Loss"],
+    totalCopies: 5,
+    availableCopies: 0,
+    waitlistCount: 7,
+    reviews: [
+      { id: "r2-1", patron: "Alex W.", rating: 5, date: "April 2, 2024", text: "One of the best novels I've read in years. The relationship between Sam and Sadie is unlike anything I've encountered in fiction." },
+      { id: "r2-2", patron: "Miriam C.", rating: 5, date: "January 14, 2024", text: "Zevin writes about creativity and friendship with such insight and tenderness. I didn't want it to end." },
+    ],
+  },
+  {
+    id: "3",
+    title: "Lessons in Chemistry",
+    author: "Bonnie Garmus",
+    genre: "Fiction",
+    availability: "available",
+    year: 2022,
+    rating: 4.3,
+    format: "print",
+    isbn: "978-0-385-54734-9",
+    description:
+      "Chemist Elizabeth Zott is not your average woman. In the early 1960s, she becomes the unlikely star of a daytime cooking show where she teaches housewives the science behind every recipe — and inadvertently helps them change their lives.",
+    publisher: "Doubleday",
+    pages: 390,
+    dewey: "813.6",
+    subjects: ["Fiction", "Historical Fiction", "Feminism", "1960s America", "Science"],
+    totalCopies: 6,
+    availableCopies: 3,
+    waitlistCount: 0,
+    reviews: [
+      { id: "r3-1", patron: "Linda P.", rating: 5, date: "May 5, 2024", text: "Funny, warm, and surprisingly moving. Elizabeth Zott is a character I'll think about for a long time." },
+      { id: "r3-2", patron: "Tom B.", rating: 4, date: "March 20, 2024", text: "Smart, witty, and full of heart. A little slow to start but absolutely worth sticking with." },
+    ],
+  },
+  {
+    id: "4",
+    title: "The Women",
+    author: "Kristin Hannah",
+    genre: "Historical Fiction",
+    availability: "available",
+    year: 2024,
+    rating: 4.6,
+    format: "print",
+    isbn: "978-1-250-31785-4",
+    description:
+      "When Frankie McGrath follows her brother to Vietnam as an Army nurse, she is transformed by what she experiences. But when she returns home, she finds an America unwilling to honor the women who served — and must discover who she is beyond the war.",
+    publisher: "St. Martin's Press",
+    pages: 473,
+    dewey: "813.6",
+    subjects: ["Historical Fiction", "Vietnam War", "Women Veterans", "1960s–1970s", "Coming of Age"],
+    totalCopies: 8,
+    availableCopies: 4,
+    waitlistCount: 3,
+    reviews: [
+      { id: "r4-1", patron: "Carol R.", rating: 5, date: "April 18, 2024", text: "Hannah at her absolute best. I knew almost nothing about female Vietnam veterans and this novel opened my eyes completely." },
+      { id: "r4-2", patron: "Patricia G.", rating: 5, date: "April 5, 2024", text: "Powerful and important. I cried, I got angry, and I cheered. Frankie is an unforgettable heroine." },
+      { id: "r4-3", patron: "Michael T.", rating: 4, date: "March 29, 2024", text: "Emotionally rich and historically illuminating. A big book in every sense, and every page earns its place." },
+    ],
+  },
+  {
+    id: "5",
+    title: "James",
+    author: "Percival Everett",
+    genre: "Fiction",
+    availability: "on-hold",
+    year: 2024,
+    rating: 4.4,
+    format: "print",
+    isbn: "978-0-385-55036-3",
+    description:
+      "A radical retelling of Adventures of Huckleberry Finn told from the perspective of the enslaved man Jim — reimagined as a man of deep intelligence navigating a world that refuses to see him as fully human, while protecting Huck and searching for his family.",
+    publisher: "Doubleday",
+    pages: 303,
+    dewey: "813.6",
+    subjects: ["Fiction", "Historical Fiction", "Race in America", "Classic Retelling", "19th Century"],
+    totalCopies: 4,
+    availableCopies: 0,
+    waitlistCount: 12,
+    reviews: [
+      { id: "r5-1", patron: "Dana F.", rating: 5, date: "May 10, 2024", text: "Absolutely brilliant. Everett transforms Twain's novel into something essential for our moment. I've pressed it on everyone I know." },
+      { id: "r5-2", patron: "Noel H.", rating: 4, date: "April 28, 2024", text: "Incisive, funny, and deeply moving. The code-switching sections alone make this worth reading." },
+    ],
+  },
+  {
+    id: "6",
+    title: "The God of the Woods",
+    author: "Liz Moore",
+    genre: "Mystery & Thriller",
+    availability: "available",
+    year: 2024,
+    rating: 4.1,
+    format: "print",
+    isbn: "978-0-593-53956-3",
+    description:
+      "In 1975, a girl disappears from an Adirondack summer camp — the second child to vanish from the same estate in twenty years. As investigators close in, long-buried secrets about the Van Laar family begin to surface in this atmospheric multi-generational thriller.",
+    publisher: "Riverhead Books",
+    pages: 481,
+    dewey: "813.6",
+    subjects: ["Mystery", "Thriller", "1970s America", "Family Secrets", "Summer Camp"],
+    totalCopies: 5,
+    availableCopies: 2,
+    waitlistCount: 0,
+    reviews: [
+      { id: "r6-1", patron: "Jess A.", rating: 4, date: "May 20, 2024", text: "Atmospheric and gripping. The alternating timelines kept me guessing until the very end." },
+      { id: "r6-2", patron: "Rob K.", rating: 4, date: "May 1, 2024", text: "A slow-burn thriller in the best sense. Moore builds dread masterfully and the characters feel incredibly real." },
+    ],
+  },
+  {
+    id: "7",
+    title: "All the Light We Cannot See",
+    author: "Anthony Doerr",
+    genre: "Historical Fiction",
+    availability: "available",
+    year: 2014,
+    rating: 4.7,
+    format: "print",
+    isbn: "978-1-4767-4658-6",
+    description:
+      "A blind French girl and a German boy meet in occupied Saint-Malo during World War II. Their braided stories unfold across the sweeping geography of the war, building to a stunning and devastating convergence. Winner of the Pulitzer Prize.",
+    publisher: "Scribner",
+    pages: 531,
+    dewey: "813.6",
+    subjects: ["Historical Fiction", "WWII", "France", "Moral Choices", "Courage"],
+    totalCopies: 7,
+    availableCopies: 5,
+    waitlistCount: 0,
+    reviews: [
+      { id: "r7-1", patron: "Eleanor V.", rating: 5, date: "February 12, 2024", text: "One of the most beautiful novels I've ever read. The prose is extraordinary. An absolute masterpiece." },
+      { id: "r7-2", patron: "Ben H.", rating: 5, date: "October 3, 2023", text: "Deserved every award it received. A profound meditation on luck, choice, and what it means to be good in impossible circumstances." },
+    ],
+  },
+  {
+    id: "8",
+    title: "Project Hail Mary",
+    author: "Andy Weir",
+    genre: "Science Fiction",
+    availability: "available",
+    year: 2021,
+    rating: 4.8,
+    format: "print",
+    isbn: "978-0-593-13520-4",
+    description:
+      "A lone astronaut wakes up far from Earth with no memory — and gradually discovers he's on a desperate one-way mission to save humanity. As his memories return piece by piece, he must figure out how to complete an impossible task with only the most unlikely of companions.",
+    publisher: "Ballantine Books",
+    pages: 476,
+    dewey: "813.6",
+    subjects: ["Science Fiction", "Space", "Astronomy", "Survival", "Friendship"],
+    totalCopies: 5,
+    availableCopies: 3,
+    waitlistCount: 0,
+    reviews: [
+      { id: "r8-1", patron: "Chris M.", rating: 5, date: "March 1, 2024", text: "The most fun I've had reading in years. Rocky alone makes this essential. Weir's scientific creativity is astonishing." },
+      { id: "r8-2", patron: "Sam R.", rating: 5, date: "January 22, 2024", text: "I'm not usually a sci-fi reader but I absolutely devoured this. The friendship at the heart of the book is genuinely moving." },
+    ],
+  },
+  {
+    id: "9",
+    title: "Fourth Wing",
+    author: "Rebecca Yarros",
+    genre: "Fantasy",
+    availability: "checked-out",
+    year: 2023,
+    rating: 4.3,
+    format: "print",
+    isbn: "978-1-64937-491-5",
+    description:
+      "Twenty-year-old Violet Sorrengail is forced to enter the Riders Quadrant at Basgiath War College, where students bond with dragons — and many don't survive the year. Her mother commands. The dragons choose. And one dangerous upperclassman may be all that stands between her and death.",
+    publisher: "Red Tower Books",
+    pages: 517,
+    dewey: "813.6",
+    subjects: ["Fantasy", "Romantasy", "Dragons", "Magic", "War College"],
+    totalCopies: 8,
+    availableCopies: 0,
+    waitlistCount: 18,
+    reviews: [
+      { id: "r9-1", patron: "Olivia T.", rating: 5, date: "April 10, 2024", text: "I read this in 36 hours and immediately put the sequel on hold. The perfect combination of romance and fantasy action." },
+      { id: "r9-2", patron: "Maya L.", rating: 4, date: "March 5, 2024", text: "Addictive and fun. If you like romantasy, this is essential reading." },
+    ],
+  },
+  {
+    id: "10",
+    title: "Piranesi",
+    author: "Susanna Clarke",
+    genre: "Fantasy",
+    availability: "available",
+    year: 2020,
+    rating: 4.2,
+    format: "print",
+    isbn: "978-1-5266-2242-9",
+    description:
+      "Piranesi lives in the House — an infinite labyrinth of halls and tidal statues — where only one other person visits him twice a week. When new messages disturb his peaceful existence, Piranesi must confront unsettling truths about his world, his identity, and how he came to be there.",
+    publisher: "Bloomsbury",
+    pages: 272,
+    dewey: "823.92",
+    subjects: ["Fantasy", "Mystery", "Identity", "Memory", "Labyrinth"],
+    totalCopies: 4,
+    availableCopies: 3,
+    waitlistCount: 0,
+    reviews: [
+      { id: "r10-1", patron: "Rachel S.", rating: 5, date: "February 28, 2024", text: "Utterly singular. Nothing else reads like this. Short but dense with beauty and strangeness." },
+      { id: "r10-2", patron: "Otto F.", rating: 4, date: "December 5, 2023", text: "I've read it three times and find something new each time. A small book that contains a whole universe." },
+    ],
+  },
+  {
+    id: "11",
+    title: "The Covenant of Water",
+    author: "Abraham Verghese",
+    genre: "Historical Fiction",
+    availability: "available",
+    year: 2023,
+    rating: 4.5,
+    format: "print",
+    isbn: "978-0-8021-6029-1",
+    description:
+      "Spanning three generations of a family in South India from 1900 to 1977, this sweeping novel follows the men and women bound by a strange condition — a tendency to drown in water — tracing the country's transformation alongside the family's. A meditation on medicine, faith, and love.",
+    publisher: "Grove Atlantic",
+    pages: 736,
+    dewey: "813.6",
+    subjects: ["Historical Fiction", "India", "Family Saga", "Medicine", "Post-Colonialism"],
+    totalCopies: 4,
+    availableCopies: 2,
+    waitlistCount: 2,
+    reviews: [
+      { id: "r11-1", patron: "Priya N.", rating: 5, date: "May 15, 2024", text: "A magisterial novel. Verghese's India is rendered with extraordinary love and precision. A book I will carry for life." },
+      { id: "r11-2", patron: "George A.", rating: 4, date: "April 8, 2024", text: "Long but never slow. The characters feel like people I've actually known. A profound achievement." },
+    ],
+  },
+  {
+    id: "12",
+    title: "The Anxious Generation",
+    author: "Jonathan Haidt",
+    genre: "Non-Fiction",
+    availability: "available",
+    year: 2024,
+    rating: 4.1,
+    format: "print",
+    isbn: "978-0-593-65512-5",
+    description:
+      "Social psychologist Jonathan Haidt examines how the sudden shift to a phone-based childhood has rewired adolescence and generated an epidemic of mental illness among teenagers — and what parents, schools, and governments can do to reverse course.",
+    publisher: "Penguin Press",
+    pages: 385,
+    dewey: "305.235",
+    subjects: ["Psychology", "Parenting", "Social Media", "Mental Health", "Adolescence"],
+    totalCopies: 5,
+    availableCopies: 2,
+    waitlistCount: 4,
+    reviews: [
+      { id: "r12-1", patron: "David S.", rating: 4, date: "May 8, 2024", text: "Important and well-argued. Whether you agree with all of Haidt's prescriptions or not, the diagnosis is hard to dismiss." },
+      { id: "r12-2", patron: "Susan B.", rating: 4, date: "April 20, 2024", text: "Every parent of teenagers should read this. Alarming but ultimately optimistic about what we can change." },
+    ],
+  },
+  {
+    id: "13",
+    title: "I'm Glad My Mom Died",
+    author: "Jennette McCurdy",
+    genre: "Biography & Memoir",
+    availability: "on-hold",
+    year: 2022,
+    rating: 4.5,
+    format: "print",
+    isbn: "978-1-982185-82-4",
+    description:
+      "Former child star Jennette McCurdy's searing memoir about her controlling mother, her struggles with eating disorders and emotional manipulation, and her eventual path toward independence, identity, and healing.",
+    publisher: "Simon & Schuster",
+    pages: 320,
+    dewey: "791.4502",
+    subjects: ["Memoir", "Celebrity", "Mental Health", "Eating Disorders", "Mother-Daughter"],
+    totalCopies: 4,
+    availableCopies: 0,
+    waitlistCount: 9,
+    reviews: [
+      { id: "r13-1", patron: "Anna G.", rating: 5, date: "March 14, 2024", text: "Devastatingly honest and unexpectedly funny. McCurdy writes about dark material with incredible grace and wit." },
+      { id: "r13-2", patron: "Felix H.", rating: 5, date: "January 30, 2024", text: "One of the best memoirs I've ever read. Brave, specific, and occasionally hilarious." },
+    ],
+  },
+  {
+    id: "14",
+    title: "The House in the Cerulean Sea",
+    author: "TJ Klune",
+    genre: "Fantasy",
+    availability: "available",
+    year: 2020,
+    rating: 4.4,
+    format: "print",
+    isbn: "978-1-250-21728-5",
+    description:
+      "Caseworker Linus Baker is sent to evaluate a highly classified orphanage housing the most dangerous magical children in the world. He's not supposed to get attached. He absolutely gets attached. A cozy, warm-hearted fantasy about chosen family, bureaucracy, and the courage to love.",
+    publisher: "Tor Books",
+    pages: 394,
+    dewey: "813.6",
+    subjects: ["Fantasy", "Cozy Fantasy", "LGBTQ+", "Found Family", "Magic"],
+    totalCopies: 5,
+    availableCopies: 3,
+    waitlistCount: 0,
+    reviews: [
+      { id: "r14-1", patron: "Grace O.", rating: 5, date: "April 30, 2024", text: "The most cozy and warm fantasy novel I've ever read. A comfort read that also makes you think about acceptance and belonging." },
+      { id: "r14-2", patron: "Ivan L.", rating: 4, date: "February 16, 2024", text: "Perfectly charming. It's sweet without being saccharine, and the found family at the end made me genuinely happy." },
+    ],
+  },
+  {
+    id: "15",
+    title: "Killers of the Flower Moon",
+    author: "David Grann",
+    genre: "Non-Fiction",
+    availability: "available",
+    year: 2017,
+    rating: 4.5,
+    format: "print",
+    isbn: "978-0-385-54248-1",
+    description:
+      "In the 1920s, the Osage Nation in Oklahoma was systematically murdered for their oil wealth in a vast conspiracy. David Grann uncovers this forgotten American atrocity and traces the formation of the FBI through the investigation that followed.",
+    publisher: "Doubleday",
+    pages: 338,
+    dewey: "976.6004",
+    subjects: ["True Crime", "History", "Native American History", "FBI", "Oklahoma"],
+    totalCopies: 6,
+    availableCopies: 4,
+    waitlistCount: 0,
+    reviews: [
+      { id: "r15-1", patron: "Mark W.", rating: 5, date: "February 5, 2024", text: "A masterpiece of narrative nonfiction. Haunting, important, and as gripping as any thriller." },
+      { id: "r15-2", patron: "June C.", rating: 4, date: "September 12, 2023", text: "Essential American history that should be required reading. Grann is among the very best in the form." },
+    ],
+  },
+  {
+    id: "16",
+    title: "Six of Crows",
+    author: "Leigh Bardugo",
+    genre: "Young Adult",
+    availability: "available",
+    year: 2015,
+    rating: 4.7,
+    format: "print",
+    isbn: "978-1-250-07659-4",
+    description:
+      "Criminal prodigy Kaz Brekker has been offered a chance at a near-impossible heist that could make him rich beyond his wildest dreams. But only if he can assemble a crew of six dangerous misfits, each with a distinct skill the job requires — and survive each other long enough to pull it off.",
+    publisher: "Henry Holt",
+    pages: 465,
+    dewey: "813.6",
+    subjects: ["Fantasy", "Young Adult", "Heist", "Ensemble Cast", "Magic Systems"],
+    totalCopies: 5,
+    availableCopies: 3,
+    waitlistCount: 0,
+    reviews: [
+      { id: "r16-1", patron: "Julia P.", rating: 5, date: "March 22, 2024", text: "The best YA fantasy I've ever read. The ensemble cast is extraordinary — every character is a complete gem." },
+      { id: "r16-2", patron: "Theo R.", rating: 5, date: "January 10, 2024", text: "Kaz Brekker is iconic. The plot is intricate but never confusing. Bardugo at her best." },
+    ],
+  },
+  {
+    id: "17",
+    title: "Wonder",
+    author: "R.J. Palacio",
+    genre: "Children's",
+    availability: "available",
+    year: 2012,
+    rating: 4.5,
+    format: "print",
+    isbn: "978-0-375-86902-0",
+    description:
+      "Ten-year-old Auggie Pullman was born with a facial difference that has kept him home-schooled for most of his life. When he enters fifth grade at a real school, he discovers that everything — including his understanding of himself and the world — can change.",
+    publisher: "Knopf",
+    pages: 315,
+    dewey: "[Fic]",
+    subjects: ["Children's Fiction", "Disabilities", "Friendship", "Middle School", "Kindness"],
+    totalCopies: 8,
+    availableCopies: 6,
+    waitlistCount: 0,
+    reviews: [
+      { id: "r17-1", patron: "Tommy F. (age 10)", rating: 5, date: "April 3, 2024", text: "This is my favorite book ever. Please read it." },
+      { id: "r17-2", patron: "Elizabeth F.", rating: 5, date: "April 3, 2024", text: "My son and I read this together. It sparked so many important conversations. A genuinely special book." },
+    ],
+  },
+  {
+    id: "18",
+    title: "Demon Copperhead",
+    author: "Barbara Kingsolver",
+    genre: "Fiction",
+    availability: "available",
+    year: 2022,
+    rating: 4.4,
+    format: "print",
+    isbn: "978-0-063-25942-7",
+    description:
+      "A boy named Demon Copperhead is born to a teenage mother in the mountains of southern Appalachia. His story — navigating foster care, the opioid crisis, and the failures of a broken system — is a searing modern retelling of David Copperfield that blazes with compassion and fury.",
+    publisher: "Harper",
+    pages: 560,
+    dewey: "813.54",
+    subjects: ["Fiction", "Opioid Crisis", "Appalachia", "Poverty", "Coming of Age"],
+    totalCopies: 5,
+    availableCopies: 3,
+    waitlistCount: 0,
+    reviews: [
+      { id: "r18-1", patron: "Carl M.", rating: 5, date: "March 10, 2024", text: "Devastating and essential. Kingsolver writes with such love for these people and such fury at the systems that failed them." },
+      { id: "r18-2", patron: "Nina J.", rating: 4, date: "February 2, 2024", text: "Dickens reimagined for a contemporary American tragedy. Impossible to put down." },
+    ],
+  },
+  {
+    id: "19",
+    title: "The Wager",
+    author: "David Grann",
+    genre: "Non-Fiction",
+    availability: "checked-out",
+    year: 2023,
+    rating: 4.2,
+    format: "print",
+    isbn: "978-0-385-53438-7",
+    description:
+      "The true story of a shipwreck, mutiny, and murder that gripped the world in the 1740s. Stranded on an island off Patagonia, the crew of HMS Wager fractured into warring factions — and those who made it home told wildly conflicting stories about what had happened.",
+    publisher: "Doubleday",
+    pages: 352,
+    dewey: "910.4",
+    subjects: ["History", "True Crime", "18th Century", "Shipwreck", "Justice"],
+    totalCopies: 4,
+    availableCopies: 0,
+    waitlistCount: 3,
+    reviews: [
+      { id: "r19-1", patron: "Steve C.", rating: 4, date: "May 12, 2024", text: "A riveting true story told with the pacing of a thriller. Grann is one of the best narrative nonfiction writers working today." },
+    ],
+  },
+  {
+    id: "20",
+    title: "The Way of Kings",
+    author: "Brandon Sanderson",
+    genre: "Fantasy",
+    availability: "available",
+    year: 2010,
+    rating: 4.6,
+    format: "print",
+    isbn: "978-0-765-32637-9",
+    description:
+      "On a world ravaged by devastating storms, a soldier, an enslaved bridgeman, and a young woman who steals forbidden books each seek truth amid coming destruction. The first volume in The Stormlight Archive — one of the most ambitious works of epic fantasy ever attempted.",
+    publisher: "Tor Books",
+    pages: 1001,
+    dewey: "813.6",
+    subjects: ["Epic Fantasy", "Magic Systems", "World-Building", "Honor", "War"],
+    totalCopies: 4,
+    availableCopies: 2,
+    waitlistCount: 1,
+    reviews: [
+      { id: "r20-1", patron: "Derek L.", rating: 5, date: "January 30, 2024", text: "The most fully realized fantasy world I've ever encountered. 1,000 pages and not a single wasted word." },
+      { id: "r20-2", patron: "Penny J.", rating: 4, date: "November 15, 2023", text: "Dense and epic in the best sense. Don't be intimidated by the size — every chapter earns its place." },
+    ],
+  },
+]
+
+// ── Sync Snapshot (covers only) ───────────────────────────────────────────── //
+//
+// Some files (like account-data.ts) are module-level and can't await.
+// BOOKS_STATIC provides seed data with OL cover URLs pre-computed —
+// all 20 books are available synchronously with real cover images.
+// For full OL enrichment (publisher, subjects…) use getBooks() instead.
+
+export const BOOKS_STATIC: BookDetail[] = BOOK_SEEDS.map((seed) => ({
+  ...seed,
+  cover: olCoverUrl(seed.isbn, "L"),
+}))
+
+// ── Async Book Fetchers ────────────────────────────────────────────────────── //
+//
+// getBooks() calls the Open Library API once per 24-hour cache window to enrich
+// the seeds with live data. The merge strategy:
+//   - publisher  → OL data if non-empty, else seed
+//   - pages      → OL data if > 0, else seed
+//   - subjects   → OL data if ≥ 2 tags (richer), else seed
+//   - cover      → always the OL deterministic URL (real book cover image)
+//
+// All other fields (availability, ratings, reviews, descriptions…) always come
+// from the seed so the app never exposes raw, unreviewed API content to users.
+
+/**
+ * Returns all 20 books, enriched with live Open Library data where available.
+ * Results are revalidated every 24 hours via Next.js fetch caching.
+ */
+export async function getBooks(): Promise<BookDetail[]> {
+  const isbns = BOOK_SEEDS.map((s) => s.isbn)
+  const olData = await fetchBooksByISBNs(isbns)
+
+  return BOOK_SEEDS.map((seed) => {
+    const ol = olDataForISBN(olData, seed.isbn)
+
+    // Publisher: prefer OL, fall back to seed
+    const publisher = extractPublisher(ol ?? {}) || seed.publisher
+
+    // Pages: prefer OL when it looks valid (> 0)
+    const pages = (ol?.number_of_pages ?? 0) > 0 ? ol!.number_of_pages! : seed.pages
+
+    // Subjects: use OL when it returns ≥ 2 tags (richer taxonomy)
+    const olSubjects = extractSubjects(ol ?? {})
+    const subjects = olSubjects.length >= 2 ? olSubjects : seed.subjects
+
+    // Cover: the OL cover CDN URL is deterministic from ISBN — always use it
+    // so real book jacket images replace the placeholder gradient.
+    const cover = olCoverUrl(seed.isbn, "L")
+
+    return { ...seed, publisher, pages, subjects, cover }
+  })
+}
+
+/** Fetches a single book by its internal numeric ID string (e.g. "7"). */
+export async function getBook(id: string): Promise<BookDetail | undefined> {
+  const books = await getBooks()
+  return books.find((b) => b.id === id)
+}
+
+/** Returns books in the same genre, excluding the given book ID. */
+export async function getRelatedBooks(genre: string, excludeId: string, count = 4): Promise<BookDetail[]> {
+  const books = await getBooks()
+  return books
+    .filter((b) => b.genre === genre && b.id !== excludeId)
+    .slice(0, count)
+}
+
+/** Returns books filtered by genre. */
+export async function getBooksByGenre(genre: string, limit?: number): Promise<BookDetail[]> {
+  const books = await getBooks()
+  const filtered = books.filter((b) => b.genre.toLowerCase() === genre.toLowerCase())
   return limit ? filtered.slice(0, limit) : filtered
-}
-
-export function getRelatedBooks(book: BookDetail, count = 4): BookDetail[] {
-  return BOOKS.filter((b) => b.id !== book.id && b.genre === book.genre).slice(0, count)
 }
 
 // ── Curated Lists ──────────────────────────────────────────────────────────── //
 
-/** IDs for the "Staff Picks" feature section */
-export const STAFF_PICKS = ["7", "8", "4", "16"]
+const STAFF_PICK_IDS = ["7", "8", "4", "16"]
+const NEW_ARRIVAL_IDS = ["5", "4", "12", "9", "6", "3", "18", "1"]
 
-/** IDs for the "New Arrivals" horizontal strip (newest additions first) */
-export const NEW_ARRIVALS = ["5", "4", "12", "9", "6", "3", "18", "1"]
+/** Returns the staff-picked books in display order. */
+export async function getStaffPicks(): Promise<BookDetail[]> {
+  const books = await getBooks()
+  return STAFF_PICK_IDS.map((id) => books.find((b) => b.id === id)).filter(Boolean) as BookDetail[]
+}
+
+/** Returns the newest-arrival books in display order. */
+export async function getNewArrivals(): Promise<BookDetail[]> {
+  const books = await getBooks()
+  return NEW_ARRIVAL_IDS.map((id) => books.find((b) => b.id === id)).filter(Boolean) as BookDetail[]
+}
 
 // ── Genres ────────────────────────────────────────────────────────────────── //
 
@@ -235,491 +811,5 @@ export const EVENTS: LibraryEvent[] = [
     totalSpots: null,
     featured: false,
     registrationRequired: false,
-  },
-]
-
-// ── Books ─────────────────────────────────────────────────────────────────── //
-
-export const BOOKS: BookDetail[] = [
-  {
-    id: "1",
-    title: "The Midnight Library",
-    author: "Matt Haig",
-    genre: "Fiction",
-    availability: "available",
-    year: 2020,
-    rating: 4.2,
-    format: "print",
-    description:
-      "Between life and death there is a library, and within that library, the shelves go on forever. Every book provides a chance to try another life you could have lived. When Nora Seed finds herself in the Midnight Library, she must decide once and for all what makes a life truly worth living.",
-    publisher: "Viking",
-    pages: 288,
-    isbn: "978-0-525-55947-4",
-    dewey: "823.92",
-    subjects: ["Fiction", "Fantasy", "Mental Health", "Parallel Lives", "Second Chances"],
-    totalCopies: 4,
-    availableCopies: 2,
-    waitlistCount: 0,
-    reviews: [
-      { id: "r1-1", patron: "Sarah M.", rating: 5, date: "March 15, 2024", text: "A beautiful, life-affirming book that made me reconsider all the roads not taken. I was in tears by the end — in the very best way." },
-      { id: "r1-2", patron: "James K.", rating: 4, date: "February 8, 2024", text: "Haig has a gift for making complex philosophical ideas feel deeply human. Warm and thoroughly thought-provoking." },
-      { id: "r1-3", patron: "Pat L.", rating: 3, date: "November 20, 2023", text: "Charming and well-written, though somewhat predictable. A gentle, reassuring read I'd recommend to anyone going through a difficult stretch." },
-    ],
-  },
-  {
-    id: "2",
-    title: "Tomorrow, and Tomorrow, and Tomorrow",
-    author: "Gabrielle Zevin",
-    genre: "Fiction",
-    availability: "checked-out",
-    year: 2022,
-    rating: 4.5,
-    format: "print",
-    description:
-      "Two old friends reunite to create a video game that becomes a phenomenon, and their creative partnership spans decades filled with joy, tragedy, envy, and love. A dazzling novel about collaboration, ambition, and what it means to devote your life to making something.",
-    publisher: "Knopf",
-    pages: 402,
-    isbn: "978-0-593-32137-8",
-    dewey: "813.6",
-    subjects: ["Fiction", "Friendship", "Video Games", "Creativity", "Loss"],
-    totalCopies: 5,
-    availableCopies: 0,
-    waitlistCount: 7,
-    reviews: [
-      { id: "r2-1", patron: "Alex W.", rating: 5, date: "April 2, 2024", text: "One of the best novels I've read in years. The relationship between Sam and Sadie is unlike anything I've encountered in fiction." },
-      { id: "r2-2", patron: "Miriam C.", rating: 5, date: "January 14, 2024", text: "Zevin writes about creativity and friendship with such insight and tenderness. I didn't want it to end." },
-    ],
-  },
-  {
-    id: "3",
-    title: "Lessons in Chemistry",
-    author: "Bonnie Garmus",
-    genre: "Fiction",
-    availability: "available",
-    year: 2022,
-    rating: 4.3,
-    format: "print",
-    description:
-      "Chemist Elizabeth Zott is not your average woman. In the early 1960s, she becomes the unlikely star of a daytime cooking show where she teaches housewives the science behind every recipe — and inadvertently helps them change their lives.",
-    publisher: "Doubleday",
-    pages: 390,
-    isbn: "978-0-385-54734-9",
-    dewey: "813.6",
-    subjects: ["Fiction", "Historical Fiction", "Feminism", "1960s America", "Science"],
-    totalCopies: 6,
-    availableCopies: 3,
-    waitlistCount: 0,
-    reviews: [
-      { id: "r3-1", patron: "Linda P.", rating: 5, date: "May 5, 2024", text: "Funny, warm, and surprisingly moving. Elizabeth Zott is a character I'll think about for a long time." },
-      { id: "r3-2", patron: "Tom B.", rating: 4, date: "March 20, 2024", text: "Smart, witty, and full of heart. A little slow to start but absolutely worth sticking with." },
-    ],
-  },
-  {
-    id: "4",
-    title: "The Women",
-    author: "Kristin Hannah",
-    genre: "Historical Fiction",
-    availability: "available",
-    year: 2024,
-    rating: 4.6,
-    format: "print",
-    description:
-      "When Frankie McGrath follows her brother to Vietnam as an Army nurse, she is transformed by what she experiences. But when she returns home, she finds an America unwilling to honor the women who served — and must discover who she is beyond the war.",
-    publisher: "St. Martin's Press",
-    pages: 473,
-    isbn: "978-1-250-31785-4",
-    dewey: "813.6",
-    subjects: ["Historical Fiction", "Vietnam War", "Women Veterans", "1960s–1970s", "Coming of Age"],
-    totalCopies: 8,
-    availableCopies: 4,
-    waitlistCount: 3,
-    reviews: [
-      { id: "r4-1", patron: "Carol R.", rating: 5, date: "April 18, 2024", text: "Hannah at her absolute best. I knew almost nothing about female Vietnam veterans and this novel opened my eyes completely." },
-      { id: "r4-2", patron: "Patricia G.", rating: 5, date: "April 5, 2024", text: "Powerful and important. I cried, I got angry, and I cheered. Frankie is an unforgettable heroine." },
-      { id: "r4-3", patron: "Michael T.", rating: 4, date: "March 29, 2024", text: "Emotionally rich and historically illuminating. A big book in every sense, and every page earns its place." },
-    ],
-  },
-  {
-    id: "5",
-    title: "James",
-    author: "Percival Everett",
-    genre: "Fiction",
-    availability: "on-hold",
-    year: 2024,
-    rating: 4.4,
-    format: "print",
-    description:
-      "A radical retelling of Adventures of Huckleberry Finn told from the perspective of the enslaved man Jim — reimagined as a man of deep intelligence navigating a world that refuses to see him as fully human, while protecting Huck and searching for his family.",
-    publisher: "Doubleday",
-    pages: 303,
-    isbn: "978-0-385-55036-3",
-    dewey: "813.6",
-    subjects: ["Fiction", "Historical Fiction", "Race in America", "Classic Retelling", "19th Century"],
-    totalCopies: 4,
-    availableCopies: 0,
-    waitlistCount: 12,
-    reviews: [
-      { id: "r5-1", patron: "Dana F.", rating: 5, date: "May 10, 2024", text: "Absolutely brilliant. Everett transforms Twain's novel into something essential for our moment. I've pressed it on everyone I know." },
-      { id: "r5-2", patron: "Noel H.", rating: 4, date: "April 28, 2024", text: "Incisive, funny, and deeply moving. The code-switching sections alone make this worth reading." },
-    ],
-  },
-  {
-    id: "6",
-    title: "The God of the Woods",
-    author: "Liz Moore",
-    genre: "Mystery & Thriller",
-    availability: "available",
-    year: 2024,
-    rating: 4.1,
-    format: "print",
-    description:
-      "In 1975, a girl disappears from an Adirondack summer camp — the second child to vanish from the same estate in twenty years. As investigators close in, long-buried secrets about the Van Laar family begin to surface in this atmospheric multi-generational thriller.",
-    publisher: "Riverhead Books",
-    pages: 481,
-    isbn: "978-0-593-53956-3",
-    dewey: "813.6",
-    subjects: ["Mystery", "Thriller", "1970s America", "Family Secrets", "Summer Camp"],
-    totalCopies: 5,
-    availableCopies: 2,
-    waitlistCount: 0,
-    reviews: [
-      { id: "r6-1", patron: "Jess A.", rating: 4, date: "May 20, 2024", text: "Atmospheric and gripping. The alternating timelines kept me guessing until the very end." },
-      { id: "r6-2", patron: "Rob K.", rating: 4, date: "May 1, 2024", text: "A slow-burn thriller in the best sense. Moore builds dread masterfully and the characters feel incredibly real." },
-    ],
-  },
-  {
-    id: "7",
-    title: "All the Light We Cannot See",
-    author: "Anthony Doerr",
-    genre: "Historical Fiction",
-    availability: "available",
-    year: 2014,
-    rating: 4.7,
-    format: "print",
-    description:
-      "A blind French girl and a German boy meet in occupied Saint-Malo during World War II. Their braided stories unfold across the sweeping geography of the war, building to a stunning and devastating convergence. Winner of the Pulitzer Prize.",
-    publisher: "Scribner",
-    pages: 531,
-    isbn: "978-1-4767-4658-6",
-    dewey: "813.6",
-    subjects: ["Historical Fiction", "WWII", "France", "Moral Choices", "Courage"],
-    totalCopies: 7,
-    availableCopies: 5,
-    waitlistCount: 0,
-    reviews: [
-      { id: "r7-1", patron: "Eleanor V.", rating: 5, date: "February 12, 2024", text: "One of the most beautiful novels I've ever read. The prose is extraordinary. An absolute masterpiece." },
-      { id: "r7-2", patron: "Ben H.", rating: 5, date: "October 3, 2023", text: "Deserved every award it received. A profound meditation on luck, choice, and what it means to be good in impossible circumstances." },
-    ],
-  },
-  {
-    id: "8",
-    title: "Project Hail Mary",
-    author: "Andy Weir",
-    genre: "Science Fiction",
-    availability: "available",
-    year: 2021,
-    rating: 4.8,
-    format: "print",
-    description:
-      "A lone astronaut wakes up far from Earth with no memory — and gradually discovers he's on a desperate one-way mission to save humanity. As his memories return piece by piece, he must figure out how to complete an impossible task with only the most unlikely of companions.",
-    publisher: "Ballantine Books",
-    pages: 476,
-    isbn: "978-0-593-13520-4",
-    dewey: "813.6",
-    subjects: ["Science Fiction", "Space", "Astronomy", "Survival", "Friendship"],
-    totalCopies: 5,
-    availableCopies: 3,
-    waitlistCount: 0,
-    reviews: [
-      { id: "r8-1", patron: "Chris M.", rating: 5, date: "March 1, 2024", text: "The most fun I've had reading in years. Rocky alone makes this essential. Weir's scientific creativity is astonishing." },
-      { id: "r8-2", patron: "Sam R.", rating: 5, date: "January 22, 2024", text: "I'm not usually a sci-fi reader but I absolutely devoured this. The friendship at the heart of the book is genuinely moving." },
-    ],
-  },
-  {
-    id: "9",
-    title: "Fourth Wing",
-    author: "Rebecca Yarros",
-    genre: "Fantasy",
-    availability: "checked-out",
-    year: 2023,
-    rating: 4.3,
-    format: "print",
-    description:
-      "Twenty-year-old Violet Sorrengail is forced to enter the Riders Quadrant at Basgiath War College, where students bond with dragons — and many don't survive the year. Her mother commands. The dragons choose. And one dangerous upperclassman may be all that stands between her and death.",
-    publisher: "Red Tower Books",
-    pages: 517,
-    isbn: "978-1-64937-491-5",
-    dewey: "813.6",
-    subjects: ["Fantasy", "Romantasy", "Dragons", "Magic", "War College"],
-    totalCopies: 8,
-    availableCopies: 0,
-    waitlistCount: 18,
-    reviews: [
-      { id: "r9-1", patron: "Olivia T.", rating: 5, date: "April 10, 2024", text: "I read this in 36 hours and immediately put the sequel on hold. The perfect combination of romance and fantasy action." },
-      { id: "r9-2", patron: "Maya L.", rating: 4, date: "March 5, 2024", text: "Addictive and fun. If you like romantasy, this is essential reading." },
-    ],
-  },
-  {
-    id: "10",
-    title: "Piranesi",
-    author: "Susanna Clarke",
-    genre: "Fantasy",
-    availability: "available",
-    year: 2020,
-    rating: 4.2,
-    format: "print",
-    description:
-      "Piranesi lives in the House — an infinite labyrinth of halls and tidal statues — where only one other person visits him twice a week. When new messages disturb his peaceful existence, Piranesi must confront unsettling truths about his world, his identity, and how he came to be there.",
-    publisher: "Bloomsbury",
-    pages: 272,
-    isbn: "978-1-5266-2242-9",
-    dewey: "823.92",
-    subjects: ["Fantasy", "Mystery", "Identity", "Memory", "Labyrinth"],
-    totalCopies: 4,
-    availableCopies: 3,
-    waitlistCount: 0,
-    reviews: [
-      { id: "r10-1", patron: "Rachel S.", rating: 5, date: "February 28, 2024", text: "Utterly singular. Nothing else reads like this. Short but dense with beauty and strangeness." },
-      { id: "r10-2", patron: "Otto F.", rating: 4, date: "December 5, 2023", text: "I've read it three times and find something new each time. A small book that contains a whole universe." },
-    ],
-  },
-  {
-    id: "11",
-    title: "The Covenant of Water",
-    author: "Abraham Verghese",
-    genre: "Historical Fiction",
-    availability: "available",
-    year: 2023,
-    rating: 4.5,
-    format: "print",
-    description:
-      "Spanning three generations of a family in South India from 1900 to 1977, this sweeping novel follows the men and women bound by a strange condition — a tendency to drown in water — tracing the country's transformation alongside the family's. A meditation on medicine, faith, and love.",
-    publisher: "Grove Atlantic",
-    pages: 736,
-    isbn: "978-0-8021-6029-1",
-    dewey: "813.6",
-    subjects: ["Historical Fiction", "India", "Family Saga", "Medicine", "Post-Colonialism"],
-    totalCopies: 4,
-    availableCopies: 2,
-    waitlistCount: 2,
-    reviews: [
-      { id: "r11-1", patron: "Priya N.", rating: 5, date: "May 15, 2024", text: "A magisterial novel. Verghese's India is rendered with extraordinary love and precision. A book I will carry for life." },
-      { id: "r11-2", patron: "George A.", rating: 4, date: "April 8, 2024", text: "Long but never slow. The characters feel like people I've actually known. A profound achievement." },
-    ],
-  },
-  {
-    id: "12",
-    title: "The Anxious Generation",
-    author: "Jonathan Haidt",
-    genre: "Non-Fiction",
-    availability: "available",
-    year: 2024,
-    rating: 4.1,
-    format: "print",
-    description:
-      "Social psychologist Jonathan Haidt examines how the sudden shift to a phone-based childhood has rewired adolescence and generated an epidemic of mental illness among teenagers — and what parents, schools, and governments can do to reverse course.",
-    publisher: "Penguin Press",
-    pages: 385,
-    isbn: "978-0-593-65512-5",
-    dewey: "305.235",
-    subjects: ["Psychology", "Parenting", "Social Media", "Mental Health", "Adolescence"],
-    totalCopies: 5,
-    availableCopies: 2,
-    waitlistCount: 4,
-    reviews: [
-      { id: "r12-1", patron: "David S.", rating: 4, date: "May 8, 2024", text: "Important and well-argued. Whether you agree with all of Haidt's prescriptions or not, the diagnosis is hard to dismiss." },
-      { id: "r12-2", patron: "Susan B.", rating: 4, date: "April 20, 2024", text: "Every parent of teenagers should read this. Alarming but ultimately optimistic about what we can change." },
-    ],
-  },
-  {
-    id: "13",
-    title: "I'm Glad My Mom Died",
-    author: "Jennette McCurdy",
-    genre: "Biography & Memoir",
-    availability: "on-hold",
-    year: 2022,
-    rating: 4.5,
-    format: "print",
-    description:
-      "Former child star Jennette McCurdy's searing memoir about her controlling mother, her struggles with eating disorders and emotional manipulation, and her eventual path toward independence, identity, and healing.",
-    publisher: "Simon & Schuster",
-    pages: 320,
-    isbn: "978-1-982185-82-4",
-    dewey: "791.4502",
-    subjects: ["Memoir", "Celebrity", "Mental Health", "Eating Disorders", "Mother-Daughter"],
-    totalCopies: 4,
-    availableCopies: 0,
-    waitlistCount: 9,
-    reviews: [
-      { id: "r13-1", patron: "Anna G.", rating: 5, date: "March 14, 2024", text: "Devastatingly honest and unexpectedly funny. McCurdy writes about dark material with incredible grace and wit." },
-      { id: "r13-2", patron: "Felix H.", rating: 5, date: "January 30, 2024", text: "One of the best memoirs I've ever read. Brave, specific, and occasionally hilarious." },
-    ],
-  },
-  {
-    id: "14",
-    title: "The House in the Cerulean Sea",
-    author: "TJ Klune",
-    genre: "Fantasy",
-    availability: "available",
-    year: 2020,
-    rating: 4.4,
-    format: "print",
-    description:
-      "Caseworker Linus Baker is sent to evaluate a highly classified orphanage housing the most dangerous magical children in the world. He's not supposed to get attached. He absolutely gets attached. A cozy, warm-hearted fantasy about chosen family, bureaucracy, and the courage to love.",
-    publisher: "Tor Books",
-    pages: 394,
-    isbn: "978-1-250-21728-5",
-    dewey: "813.6",
-    subjects: ["Fantasy", "Cozy Fantasy", "LGBTQ+", "Found Family", "Magic"],
-    totalCopies: 5,
-    availableCopies: 3,
-    waitlistCount: 0,
-    reviews: [
-      { id: "r14-1", patron: "Grace O.", rating: 5, date: "April 30, 2024", text: "The most cozy and warm fantasy novel I've ever read. A comfort read that also makes you think about acceptance and belonging." },
-      { id: "r14-2", patron: "Ivan L.", rating: 4, date: "February 16, 2024", text: "Perfectly charming. It's sweet without being saccharine, and the found family at the end made me genuinely happy." },
-    ],
-  },
-  {
-    id: "15",
-    title: "Killers of the Flower Moon",
-    author: "David Grann",
-    genre: "Non-Fiction",
-    availability: "available",
-    year: 2017,
-    rating: 4.5,
-    format: "print",
-    description:
-      "In the 1920s, the Osage Nation in Oklahoma was systematically murdered for their oil wealth in a vast conspiracy. David Grann uncovers this forgotten American atrocity and traces the formation of the FBI through the investigation that followed.",
-    publisher: "Doubleday",
-    pages: 338,
-    isbn: "978-0-385-54248-1",
-    dewey: "976.6004",
-    subjects: ["True Crime", "History", "Native American History", "FBI", "Oklahoma"],
-    totalCopies: 6,
-    availableCopies: 4,
-    waitlistCount: 0,
-    reviews: [
-      { id: "r15-1", patron: "Mark W.", rating: 5, date: "February 5, 2024", text: "A masterpiece of narrative nonfiction. Haunting, important, and as gripping as any thriller." },
-      { id: "r15-2", patron: "June C.", rating: 4, date: "September 12, 2023", text: "Essential American history that should be required reading. Grann is among the very best in the form." },
-    ],
-  },
-  {
-    id: "16",
-    title: "Six of Crows",
-    author: "Leigh Bardugo",
-    genre: "Young Adult",
-    availability: "available",
-    year: 2015,
-    rating: 4.7,
-    format: "print",
-    description:
-      "Criminal prodigy Kaz Brekker has been offered a chance at a near-impossible heist that could make him rich beyond his wildest dreams. But only if he can assemble a crew of six dangerous misfits, each with a distinct skill the job requires — and survive each other long enough to pull it off.",
-    publisher: "Henry Holt",
-    pages: 465,
-    isbn: "978-1-250-07659-4",
-    dewey: "813.6",
-    subjects: ["Fantasy", "Young Adult", "Heist", "Ensemble Cast", "Magic Systems"],
-    totalCopies: 5,
-    availableCopies: 3,
-    waitlistCount: 0,
-    reviews: [
-      { id: "r16-1", patron: "Julia P.", rating: 5, date: "March 22, 2024", text: "The best YA fantasy I've ever read. The ensemble cast is extraordinary — every character is a complete gem." },
-      { id: "r16-2", patron: "Theo R.", rating: 5, date: "January 10, 2024", text: "Kaz Brekker is iconic. The plot is intricate but never confusing. Bardugo at her best." },
-    ],
-  },
-  {
-    id: "17",
-    title: "Wonder",
-    author: "R.J. Palacio",
-    genre: "Children's",
-    availability: "available",
-    year: 2012,
-    rating: 4.5,
-    format: "print",
-    description:
-      "Ten-year-old Auggie Pullman was born with a facial difference that has kept him home-schooled for most of his life. When he enters fifth grade at a real school, he discovers that everything — including his understanding of himself and the world — can change.",
-    publisher: "Knopf",
-    pages: 315,
-    isbn: "978-0-375-86902-0",
-    dewey: "[Fic]",
-    subjects: ["Children's Fiction", "Disabilities", "Friendship", "Middle School", "Kindness"],
-    totalCopies: 8,
-    availableCopies: 6,
-    waitlistCount: 0,
-    reviews: [
-      { id: "r17-1", patron: "Tommy F. (age 10)", rating: 5, date: "April 3, 2024", text: "This is my favorite book ever. Please read it." },
-      { id: "r17-2", patron: "Elizabeth F.", rating: 5, date: "April 3, 2024", text: "My son and I read this together. It sparked so many important conversations. A genuinely special book." },
-    ],
-  },
-  {
-    id: "18",
-    title: "Demon Copperhead",
-    author: "Barbara Kingsolver",
-    genre: "Fiction",
-    availability: "available",
-    year: 2022,
-    rating: 4.4,
-    format: "print",
-    description:
-      "A boy named Demon Copperhead is born to a teenage mother in the mountains of southern Appalachia. His story — navigating foster care, the opioid crisis, and the failures of a broken system — is a searing modern retelling of David Copperfield that blazes with compassion and fury.",
-    publisher: "Harper",
-    pages: 560,
-    isbn: "978-0-063-25942-7",
-    dewey: "813.54",
-    subjects: ["Fiction", "Opioid Crisis", "Appalachia", "Poverty", "Coming of Age"],
-    totalCopies: 5,
-    availableCopies: 3,
-    waitlistCount: 0,
-    reviews: [
-      { id: "r18-1", patron: "Carl M.", rating: 5, date: "March 10, 2024", text: "Devastating and essential. Kingsolver writes with such love for these people and such fury at the systems that failed them." },
-      { id: "r18-2", patron: "Nina J.", rating: 4, date: "February 2, 2024", text: "Dickens reimagined for a contemporary American tragedy. Impossible to put down." },
-    ],
-  },
-  {
-    id: "19",
-    title: "The Wager",
-    author: "David Grann",
-    genre: "Non-Fiction",
-    availability: "checked-out",
-    year: 2023,
-    rating: 4.2,
-    format: "print",
-    description:
-      "The true story of a shipwreck, mutiny, and murder that gripped the world in the 1740s. Stranded on an island off Patagonia, the crew of HMS Wager fractured into warring factions — and those who made it home told wildly conflicting stories about what had happened.",
-    publisher: "Doubleday",
-    pages: 352,
-    isbn: "978-0-385-53438-7",
-    dewey: "910.4",
-    subjects: ["History", "True Crime", "18th Century", "Shipwreck", "Justice"],
-    totalCopies: 4,
-    availableCopies: 0,
-    waitlistCount: 3,
-    reviews: [
-      { id: "r19-1", patron: "Steve C.", rating: 4, date: "May 12, 2024", text: "A riveting true story told with the pacing of a thriller. Grann is one of the best narrative nonfiction writers working today." },
-    ],
-  },
-  {
-    id: "20",
-    title: "The Way of Kings",
-    author: "Brandon Sanderson",
-    genre: "Fantasy",
-    availability: "available",
-    year: 2010,
-    rating: 4.6,
-    format: "print",
-    description:
-      "On a world ravaged by devastating storms, a soldier, an enslaved bridgeman, and a young woman who steals forbidden books each seek truth amid coming destruction. The first volume in The Stormlight Archive — one of the most ambitious works of epic fantasy ever attempted.",
-    publisher: "Tor Books",
-    pages: 1001,
-    isbn: "978-0-765-32637-9",
-    dewey: "813.6",
-    subjects: ["Epic Fantasy", "Magic Systems", "World-Building", "Honor", "War"],
-    totalCopies: 4,
-    availableCopies: 2,
-    waitlistCount: 1,
-    reviews: [
-      { id: "r20-1", patron: "Derek L.", rating: 5, date: "January 30, 2024", text: "The most fully realized fantasy world I've ever encountered. 1,000 pages and not a single wasted word." },
-      { id: "r20-2", patron: "Penny J.", rating: 4, date: "November 15, 2023", text: "Dense and epic in the best sense. Don't be intimidated by the size — every chapter earns its place." },
-    ],
   },
 ]

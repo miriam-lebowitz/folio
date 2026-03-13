@@ -1,5 +1,5 @@
 import type { BookDetail } from "./data"
-import { BOOKS } from "./data"
+import { BOOKS_STATIC as BOOKS } from "./data"
 
 // ── Types ──────────────────────────────────────────────────────────────────── //
 

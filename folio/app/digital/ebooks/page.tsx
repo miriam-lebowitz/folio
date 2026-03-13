@@ -12,7 +12,7 @@ import {
   Film,
   ChevronDown,
 } from "lucide-react"
-import { BOOKS } from "@/lib/data"
+import { getBooks } from "@/lib/data"
 
 export const metadata = {
   title: "eBooks & Audiobooks",
@@ -82,10 +82,8 @@ const platforms = [
   },
 ]
 
-// ── Featured digital titles (curated from catalog) ────────────────────────── //
-const featuredDigital = ["8", "1", "10", "14", "3", "16"].map(
-  (id) => BOOKS.find((b) => b.id === id)!,
-).filter(Boolean)
+// ── Featured digital title IDs (resolved async in the page component) ──────── //
+const FEATURED_IDS = ["8", "1", "10", "14", "3", "16"]
 
 // ── FAQ ───────────────────────────────────────────────────────────────────── //
 const faqs = [
@@ -115,7 +113,9 @@ const faqs = [
   },
 ]
 
-export default function EbooksPage() {
+export default async function EbooksPage() {
+  const allBooks = await getBooks()
+  const featuredDigital = FEATURED_IDS.map((id) => allBooks.find((b) => b.id === id)).filter(Boolean) as (typeof allBooks)[number][]
   return (
     <div className="flex flex-col">
 
